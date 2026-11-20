@@ -1,0 +1,414 @@
+GlowScript 3.2 VPython
+
+# ==========================================
+# 전기차 배터리 과열 시뮬레이터
+# ==========================================
+
+# 1. 화면 설정
+scene = canvas(
+    title="전기차 배터리 과열 시뮬레이터",
+    width=900,
+    height=550,
+    background=vector(0.92, 0.95, 0.98)
+)
+
+scene.center = vector(0, 0, 0)
+scene.range = 6
+
+# 2. 배터리 본체
+battery = box(
+    pos=vector(0, 0, 0),
+    size=vector(4, 1.5, 2),
+    color=color.green
+)
+
+# 배터리 셀
+cells = []
+
+for i in range(5):
+    cell = box(
+        pos=vector(-1.6 + i * 0.8, 0.85, 0),
+        size=vector(0.55, 0.2, 1.2),
+        color=color.gray(0.7)
+    )
+    cells.append(cell)
+
+# 배터리 단자
+terminal1 = cylinder(
+    pos=vector(-1.5, 0.8, 1),
+    axis=vector(0, 0.4, 0),
+    radius=0.2,
+    color=color.red
+)
+
+terminal2 = cylinder(
+    pos=vector(1.5, 0.8, 1),
+    axis=vector(0, 0.4, 0),
+    radius=0.2,
+    color=color.blue
+)
+
+# 3. 화염 효과
+flames = []
+
+for i in range(12):
+    flame = sphere(
+        pos=vector(-1.5 + (i % 4), 1.2 + (i // 4) * 0.5, 0),
+        radius=0.25,
+        color=color.orange,
+        opacity=0
+    )
+    flames.append(flame)
+
+# 4. 물방울 효과
+drops = []
+
+for i in range(12):
+    drop = sphere(
+        pos=vector(-1.5 + (i % 4), 4, 0),
+        radius=0.1,
+        color=color.cyan,
+        opacity=0
+    )
+    drops.append(drop)
+
+# 5. 소화 장치
+blanket = box(
+    pos=vector(0, 1.5, 0),
+    size=vector(4.5, 0.2, 2.5),
+    color=color.gray(0.5),
+    opacity=0
+)
+
+tank = box(
+    pos=vector(0, -1.2, 0),
+    size=vector(5, 0.3, 3),
+    color=color.blue,
+    opacity=0
+)
+
+water = box(
+    pos=vector(0, -1.05, 0),
+    size=vector(4.8, 0.1, 2.8),
+    color=color.cyan,
+    opacity=0
+)
+
+# 6. 상태 변수
+temperature = 25
+elapsed_time = 0
+
+running = False
+fire_started = False
+extinguished = False
+
+suppression_mode = None
+effect_count = 0
+
+DANGER_TEMP = 100
+
+# 과열 원인별 발열량
+heat_rates = {
+    "과충전": 0.35,
+    "물리적 충격": 0.5,
+    "BMS 오류": 0.4,
+    "냉각 시스템 고장": 0.3
+}
+
+# 원인별 냉각량
+cooling_rates = {
+    "과충전": 0.08,
+    "물리적 충격": 0.05,
+    "BMS 오류": 0.06,
+    "냉각 시스템 고장": 0.03
+}
+
+selected_cause = "과충전"
+
+# 7. 화면 정보 출력
+scene.append_to_caption("\n\n과열 원인 선택: ")
+
+def change_cause(m):
+    global selected_cause
+    selected_cause = m.selected
+
+cause_menu = menu(
+    choices=[
+        "과충전",
+        "물리적 충격",
+        "BMS 오류",
+        "냉각 시스템 고장"
+    ],
+    bind=change_cause
+)
+
+scene.append_to_caption("\n\n")
+
+temperature_text = wtext(text="현재 온도: 25℃")
+scene.append_to_caption("\n")
+
+time_text = wtext(text="경과 시간: 0초")
+scene.append_to_caption("\n")
+
+status_text = wtext(text="상태: 정상")
+scene.append_to_caption("\n")
+
+message_text = wtext(text="")
+scene.append_to_caption("\n\n")
+
+# 8. 소화 버튼 생성 전 함수 준비
+
+def reset_effects():
+    for flame in flames:
+        flame.opacity = 0
+
+    for drop in drops:
+        drop.opacity = 0
+        drop.pos.y = 4
+
+    blanket.opacity = 0
+    tank.opacity = 0
+    water.opacity = 0
+
+
+# 9. 화재 발생 함수
+
+def start_fire():
+    global fire_started, running
+
+    fire_started = True
+    running = False
+
+    battery.color = color.red
+
+    status_text.text = "상태: 화재 발생!"
+    message_text.text = "배터리 온도가 위험 수준에 도달했습니다."
+
+    blanket_button.disabled = False
+    sprinkler_button.disabled = False
+    tank_button.disabled = False
+
+    for flame in flames:
+        flame.opacity = 0.9
+
+
+# 10. 소화 방법 선택
+
+def choose_blanket(b):
+    global suppression_mode, effect_count
+
+    if fire_started and not extinguished:
+        suppression_mode = "blanket"
+        effect_count = 0
+        reset_effects()
+
+        message_text.text = "질식 소화포 효과 진행 중"
+
+
+def choose_sprinkler(b):
+    global suppression_mode, effect_count
+
+    if fire_started and not extinguished:
+        suppression_mode = "sprinkler"
+        effect_count = 0
+        reset_effects()
+
+        message_text.text = "스프링클러 시각 효과 진행 중"
+
+
+def choose_tank(b):
+    global suppression_mode, effect_count
+
+    if fire_started and not extinguished:
+        suppression_mode = "tank"
+        effect_count = 0
+        reset_effects()
+
+        message_text.text = "소화수조 시각 효과 진행 중"
+
+
+# 11. 소화 효과 실행
+
+def update_suppression():
+    global effect_count, extinguished
+
+    if suppression_mode == None:
+        return
+
+    effect_count += 1
+
+    if suppression_mode == "blanket":
+        blanket.opacity = 0.7
+
+    elif suppression_mode == "sprinkler":
+        for i in range(12):
+            drops[i].opacity = 0.9
+            drops[i].pos.y -= 0.08
+
+            if drops[i].pos.y < -0.5:
+                drops[i].pos.y = 4
+
+    elif suppression_mode == "tank":
+        tank.opacity = 0.7
+        water.opacity = 0.8
+
+    # 효과 완료
+    if effect_count >= 30:
+
+        extinguished = True
+
+        # 화염 제거
+        for flame in flames:
+            flame.opacity = 0
+
+        for drop in drops:
+            drop.opacity = 0
+
+        # 선택한 소화 장치 표시
+        if suppression_mode == "blanket":
+            blanket.opacity = 0.7
+
+        elif suppression_mode == "tank":
+            tank.opacity = 0.7
+            water.opacity = 0.8
+
+        status_text.text = "상태: 소화 효과 완료"
+        message_text.text = "교육용 시뮬레이션이 종료되었습니다."
+
+        blanket_button.disabled = True
+        sprinkler_button.disabled = True
+        tank_button.disabled = True
+
+
+# 12. 시뮬레이션 시작
+
+def start_simulation(b):
+    global running
+
+    if not fire_started and not extinguished:
+        running = True
+        status_text.text = "상태: 과열 진행 중"
+
+
+# 13. 일시정지
+
+def pause_simulation(b):
+    global running
+
+    running = False
+    status_text.text = "상태: 일시정지"
+
+
+# 14. 초기화
+
+def reset_simulation(b):
+    global temperature, elapsed_time
+    global running, fire_started, extinguished
+    global suppression_mode, effect_count
+
+    temperature = 25
+    elapsed_time = 0
+
+    running = False
+    fire_started = False
+    extinguished = False
+
+    suppression_mode = None
+    effect_count = 0
+
+    battery.color = color.green
+
+    reset_effects()
+
+    temperature_text.text = "현재 온도: 25℃"
+    time_text.text = "경과 시간: 0초"
+
+    status_text.text = "상태: 정상"
+    message_text.text = ""
+
+    blanket_button.disabled = True
+    sprinkler_button.disabled = True
+    tank_button.disabled = True
+
+
+# 15. 조작 버튼
+
+scene.append_to_caption("시뮬레이션 조작\n")
+
+start_button = button(
+    text="시작",
+    bind=start_simulation
+)
+
+pause_button = button(
+    text="일시정지",
+    bind=pause_simulation
+)
+
+reset_button = button(
+    text="초기화",
+    bind=reset_simulation
+)
+
+scene.append_to_caption("\n\n소화 방법 선택\n")
+
+blanket_button = button(
+    text="질식 소화포 덮기",
+    bind=choose_blanket,
+    disabled=True
+)
+
+sprinkler_button = button(
+    text="상부 스프링클러 작동",
+    bind=choose_sprinkler,
+    disabled=True
+)
+
+tank_button = button(
+    text="이동식 소화수조",
+    bind=choose_tank,
+    disabled=True
+)
+
+
+# 16. 메인 시뮬레이션
+
+while True:
+
+    rate(10)
+
+    if running and not fire_started:
+
+        elapsed_time += 1
+
+        # 온도 변화 계산
+        temperature += (
+            heat_rates[selected_cause]
+            - cooling_rates[selected_cause]
+        ) * 5
+
+        temperature_text.text = (
+            "현재 온도: " + str(round(temperature, 1)) + "℃"
+        )
+
+        time_text.text = (
+            "경과 시간: " + str(elapsed_time) + "초"
+        )
+
+        # 온도에 따른 배터리 색상 변화
+        if temperature < 40:
+            battery.color = color.green
+
+        elif temperature < 70:
+            battery.color = color.yellow
+
+        elif temperature < DANGER_TEMP:
+            battery.color = color.orange
+
+        # 위험 온도 도달
+        if temperature >= DANGER_TEMP:
+            start_fire()
+
+    # 화재 발생 후 소화 효과
+    if fire_started and not extinguished:
+        update_suppression()
